@@ -23,9 +23,9 @@ all_pitches <- Reduce(rbind, lapply(files, read.csv)) %>%
   unite("matchup", stand, p_throws, remove = FALSE) %>% 
   inner_join(pitcher_ids, by = "pitcher")
 
-swings_2022_1 <- read.csv('swings_2022_4.csv') %>% 
-  select(-delta_home_win_exp, -delta_run_exp)
-write.csv(swings_2022_1, 'swings_2022_4.csv')
+swings <- read.csv('swings_2022.csv')
+write.csv(swings[], row.names = F, 'swings_2022_1.csv')
+
 ```
 
 # Approach 1: Cluster by pitch: Cluster by pitch and predict batter success against a pitch and go from there
