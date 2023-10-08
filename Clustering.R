@@ -69,7 +69,7 @@ pitchers_examples_reformat <- pitchers_examples %>%
 library(gt)
 library(gtExtras)
 
-gt(pitchers_examples_reformat) %>%
+pitchers_gt = gt(pitchers_examples_reformat) %>%
   gt_theme_espn() %>%
   fmt_number(pitches, decimals = 0) %>%
   fmt_number(avg_velo, decimals = 1) %>%
@@ -83,4 +83,6 @@ gt(pitchers_examples_reformat) %>%
              release_angle_ground ~ "release angle") %>%
   cols_align("center", columns = pitches:release_angle_ground) %>%
   tab_header("K-Means Clustering: Pitcher Subtypes")
+
+gtsave(pitchers_gt, "Pitcher-K-Means.html")
  
