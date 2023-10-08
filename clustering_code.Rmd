@@ -1,0 +1,41 @@
+---
+title: "clustering_code"
+author: "SASL"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# Set directory
+setwd('Your directory with all of the github files')
+# Load packages
+library(tidyverse)
+```
+
+```{r}
+files <- list.files(pattern = "2022", full.names = TRUE)
+pitcher_ids <- read.csv("pitcher_ids.csv")
+batter_ids <- read.csv("hitter_ids.csv")
+all_pitches <- Reduce(rbind, lapply(files, read.csv)) %>%
+  filter(balls < 4 & strikes < 3) %>%
+  unite("count", balls, strikes, remove = FALSE) %>%
+  unite("matchup", stand, p_throws, remove = FALSE) %>% 
+  inner_join(pitcher_ids, by = "pitcher") %>% 
+  inner_join(batter_ids, by = "batter")
+```
+
+```{r}
+pitch_clusters <- all_pitches %>% 
+  select(c(pitcher_name, hitter_name, p_throws, pitch_type, release_speed, release_pos_x, release_pos_z, pfx_x, 
+           pfx_z, release_spin_rate, release_extension, spin_axis, plate_x, plate_z)) %>% 
+  drop_na(where(is.numeric)) %>% 
+  select(where(is.numeric)) %>% 
+  kmeans(centers = 400, nstart = 5)
+
+cbind(all_pitches %>% select(c(pitcher_name, hitter_name, p_throws, pitch_type, release_speed, 
+                               release_pos_x, release_pos_z, pfx_x, pfx_z, release_spin_rate, 
+                               release_extension, spin_axis, plate_x, plate_z)) %>% 
+        drop_na(where(is.numeric)), 
+      cluster = pitch_clusters$cluster) 
+```
+
