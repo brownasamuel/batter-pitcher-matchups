@@ -66,6 +66,11 @@ pitchers_examples_reformat <- pitchers_examples %>%
   arrange(cluster, -pitches) %>%
   select(-cluster)
 
+raw_info <- pitchers_clustered %>%
+  select(pitcher, name, hand, cluster)
+
+write_csv(raw_info, "PitcherClusterInfo.csv")
+
 library(gt)
 library(gtExtras)
 
