@@ -1,0 +1,95 @@
+---
+title: "Hitter clustering"
+author: "Samuel Brown"
+date: "2023-10-30"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+ggplot2::theme_set(ggplot2::theme_bw()) 
+library(tidyverse)
+```
+
+```{r}
+files <- list.files(pattern = "2022", full.names = TRUE)
+pitcher_ids <- read.csv("pitcher_ids.csv")
+batter_ids <- read.csv("hitter_ids.csv")
+all_pitches <- Reduce(rbind, lapply(files, read.csv)) %>%
+  filter(balls < 4 & strikes < 3) %>%
+  unite("count", balls, strikes, remove = FALSE) %>%
+  unite("matchup", stand, p_throws, remove = FALSE) %>% 
+  inner_join(pitcher_ids, by = "pitcher") %>% 
+  inner_join(batter_ids, by = "batter")
+
+rm(pitcher_ids)
+rm(batter_ids)
+```
+
+```{r}
+# Cluster on power(95th percentile exit velo) plus O-Swing%, Z-Swing, Z-contact
+hitter_data <- all_pitches %>% 
+  mutate(in_zone = plate_z <= sz_top & plate_z >= sz_bot & plate_x <= .708 & plate_x >= -.708,
+         swing = description %in% c("swinging_strike", "hit_into_play", "foul", "foul_tip", 
+                                    "foul_bunt", "swinging_strike_blocked", "missed_bunt"),
+         whiff = description %in% c("swinging_strike_blocked", "swinging_strike", "foul_tip")) %>% 
+  group_by(batter, hitter_name) %>% 
+  summarize(exit_velo_ct = sum(!is.na(launch_speed)),
+            exit_velo_95 = quantile(launch_speed, .95, na.rm = TRUE),
+            O_swing = sum(swing & !in_zone)/sum(!in_zone),
+            Z_swing = sum(swing & in_zone)/sum(in_zone),
+            Z_contact = sum(swing & !whiff & in_zone)/sum(swing & in_zone),
+            .groups = 'drop') %>% 
+  filter(exit_velo_ct > 15) %>% 
+  select(-exit_velo_ct)
+
+head(hitter_data)
+```
+
+```{r}
+scale_z <- function(x) (x - mean(x, na.rm = T)) / sd(x, na.rm = T)
+
+test_centers <- function(i, df){
+  # Make the clusters with i centers
+  test_cluster <- df %>% 
+    kmeans(centers = i, nstart = 5, iter.max = 300)
+  # Find how effective
+  return(test_cluster$tot.withinss)
+}
+
+scaled_hitters <- hitter_data %>% 
+  select(where(is.numeric) & !batter) %>% 
+  mutate(across(where(is.numeric), 
+               scale_z),
+         O_swing = O_swing * .7,
+         Z_swing = Z_swing * .7) %>% 
+  drop_na()
+
+
+# Find an elbow
+test_cluster_list <- 1:9
+test_cluster_results <- sapply(test_cluster_list, test_centers, 
+                               df = scaled_hitters)
+test_cluster_results %>% 
+  data.frame(clusters = test_cluster_list,
+             total_within_ss = .) %>% 
+  ggplot(aes(x = clusters, y = log(total_within_ss))) +
+  geom_point() +
+  geom_line() 
+```
+
+```{r}
+# Cluster the hitters
+hitter_clusters <- scaled_hitters %>% 
+  kmeans(centers = 5, nstart = 10, iter.max = 1000)
+
+# Find group averages
+cbind(hitter_data %>% drop_na(),
+      cluster = hitter_clusters$cluster) %>% 
+  group_by(cluster) %>% 
+  summarize(exit_velo_95 = mean(exit_velo_95),
+            O_swing = mean(O_swing),
+            Z_swing = mean(Z_swing),
+            Z_contact = mean(Z_contact))
+```
+
