@@ -83,12 +83,13 @@ test_cluster_results %>%
 
 ```{r}
 # Cluster the hitters
-hitter_clusters <- scaled_hitters %>% 
+hitter_kmeans <- scaled_hitters %>% 
   kmeans(centers = 5, nstart = 10, iter.max = 1000)
+hitter_clusters <- cbind(hitter_data %>% drop_na(),
+      cluster = hitter_kmeans$cluster)
 
 # Find group averages
-cbind(hitter_data %>% drop_na(),
-      cluster = hitter_clusters$cluster) %>% 
+hitter_clusters %>% 
   group_by(cluster) %>% 
   summarize(exit_velo_95 = mean(exit_velo_95),
             O_swing = mean(O_swing),

@@ -1,0 +1,17 @@
+---
+title: "Matchup Modeling"
+author: "Samuel Brown"
+date: "2023-11-05"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+ggplot2::theme_set(ggplot2::theme_bw()) 
+library(tidyverse)
+```
+
+```{r}
+
+```
+
