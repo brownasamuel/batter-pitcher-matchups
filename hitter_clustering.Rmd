@@ -9,6 +9,7 @@ output: pdf_document
 knitr::opts_chunk$set(echo = TRUE)
 ggplot2::theme_set(ggplot2::theme_bw()) 
 library(tidyverse)
+library(mclust)
 ```
 
 ```{r}
@@ -30,6 +31,7 @@ rm(batter_ids)
 # Cluster on power(95th percentile exit velo) plus O-Swing%, Z-Swing, Z-contact
 hitter_data <- all_pitches %>% 
   mutate(in_zone = plate_z <= sz_top & plate_z >= sz_bot & plate_x <= .708 & plate_x >= -.708,
+         #in_zone = zone <= 9
          swing = description %in% c("swinging_strike", "hit_into_play", "foul", "foul_tip", 
                                     "foul_bunt", "swinging_strike_blocked", "missed_bunt"),
          whiff = description %in% c("swinging_strike_blocked", "swinging_strike", "foul_tip")) %>% 
@@ -46,6 +48,7 @@ hitter_data <- all_pitches %>%
 head(hitter_data)
 ```
 
+#### K Means
 ```{r}
 scale_z <- function(x) (x - mean(x, na.rm = T)) / sd(x, na.rm = T)
 
@@ -92,4 +95,26 @@ cbind(hitter_data %>% drop_na(),
             Z_swing = mean(Z_swing),
             Z_contact = mean(Z_contact))
 ```
+
+#### Gaussian Mixed Models
+```{r}
+hitter_gmm <- Mclust(scaled_hitters, G = test_cluster_list, verbose = FALSE)
+plot(hitter_gmm, what = "BIC")
+```
+
+```{r}
+# Use optimal clustering algorithm
+hitter_gmm <- Mclust(scaled_hitters, G = 2, modelNames = "VEE", verbose = FALSE)
+# Visualize and look at group averages
+plot(hitter_gmm, what = "uncertainty")
+
+cbind(hitter_data, cluster = as.factor(hitter_gmm$classification)) %>% 
+  group_by(cluster) %>% 
+  summarize(exit_velo_95 = mean(exit_velo_95),
+            O_swing = mean(O_swing),
+            Z_swing = mean(Z_swing),
+            Z_contact = mean(Z_contact))
+```
+
+
 

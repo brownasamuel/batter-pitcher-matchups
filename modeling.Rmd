@@ -1,0 +1,272 @@
+---
+title: "Untitled"
+author: "Samuel Brown"
+date: "2023-09-04"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+ggplot2::theme_set(ggplot2::theme_bw()) 
+# Set directory
+setwd("C:/Users/brown/Documents/GitHub/batter-pitcher-matchups")
+# Load packages
+library(tidyverse)
+library(mclust)
+```
+
+```{r}
+files <- list.files(pattern = "2022", full.names = TRUE)
+pitcher_ids <- read.csv("pitcher_ids.csv")
+batter_ids <- read.csv("hitter_ids.csv")
+all_pitches <- Reduce(rbind, lapply(files, read.csv)) %>%
+  filter(balls < 4 & strikes < 3) %>%
+  unite("count", balls, strikes, remove = FALSE) %>%
+  unite("matchup", stand, p_throws, remove = FALSE) %>% 
+  inner_join(pitcher_ids, by = "pitcher") %>% 
+  inner_join(batter_ids, by = "batter")
+
+rm(pitcher_ids)
+rm(batter_ids)
+```
+
+##########################################################################################################
+# Approach 3: Cluster by pitch and predict batter success against a pitch and go from there
+### Get data ready
+```{r}
+scale_z <- function(x) (x - mean(x, na.rm = T)) / sd(x, na.rm = T)
+# Think about imputing missing necessary values
+
+scaled_pitches <- all_pitches %>% 
+  select(c(pitcher_name, hitter_name, p_throws, pitch_type, release_speed, release_spin_rate
+           #,pfx_x, pfx_z
+           #,release_pos_x, release_pos_z
+           #,release_extension
+           )) %>% 
+  drop_na(where(is.numeric)) %>% 
+  mutate(# Flip if lefty
+         #release_pos_x = ifelse(p_throws == "L", -1 * release_pos_x, release_pos_x),
+         #pfx_x = ifelse(p_throws == "L", -1 * pfx_x, pfx_x),
+         #spin_axis = ifelse(p_throws == "L", -1* (spin_axis - 180) + 180, spin_axis),
+         # Turn to z scores
+         across(where(is.numeric), scale_z)) %>% 
+  mutate(# Scale them based on importance
+         release_speed = 1.5 * release_speed
+         #,release_pos_x = release_pos_x*.4
+         #,release_pos_z = release_pos_z*.4,
+         #,pfx_x = pfx_x
+         #,pfx_z = pfx_z
+         #,release_extension = release_extension/2
+         )
+
+set.seed(12345)
+scaled_pitches2 <- scaled_pitches %>% 
+  select(where(is.numeric)) %>% 
+  slice(sample(1:nrow(.), .2*nrow(.))  )
+```
+
+### Find optimal number of clusters
+```{r, warning = FALSE}
+# Try gaussian mixture models
+# Adjusted rand index with clusters vs statcast pitch types
+
+test_centers <- function(i, df){
+  # Make the clusters with i centers
+  test_cluster <- df %>% 
+    kmeans(centers = i, nstart = 5, iter.max = 300)
+  # Find how effective
+  return(test_cluster$tot.withinss)
+}
+
+test_cluster_list <- 2:55
+test_cluster_results <- sapply(test_cluster_list, test_centers, df = scaled_pitches2)
+test_cluster_results %>% 
+  data.frame(clusters = test_cluster_list,
+             total_within_ss = .) %>% 
+  ggplot(aes(x = clusters, y = log(total_within_ss))) +
+  geom_point() +
+  geom_line() 
+```
+
+```{r}
+set.seed(31958)
+gmm_pitches <- Mclust(scaled_pitches2, G = 3:20)
+
+plot(gmm_pitches, what = "BIC") # Note: maximize BIC = 2logL - m log n
+```
+
+# Try doing subclusters of pitch types
+```{r}
+ff_cluster_results <- scaled_pitches %>%
+  filter(pitch_type == "FF") %>% 
+  select(where(is.numeric)) %>% 
+  sapply(1:14, test_centers, df = .)
+
+ff_cluster_results %>% 
+  data.frame(clusters = 1:14,
+             total_within_ss = .) %>% 
+  ggplot(aes(x = clusters, y = log(total_within_ss))) +
+  geom_point() +
+  geom_line()
+
+ff_clusters <- scaled_pitches %>%
+  filter(pitch_type == "FF") %>% 
+  select(where(is.numeric)) %>% 
+  kmeans(centers = 3, nstart = 10, iter.max = 1000)
+
+
+cbind(all_pitches %>% 
+        filter(pitch_type == "FF") %>% 
+        select(c(pitcher_name, hitter_name, p_throws, pitch_type, release_speed, pfx_x, pfx_z, 
+                 woba_value, launch_angle, description)) %>% 
+        drop_na(where(is.numeric) & !launch_angle & !woba_value),
+      cluster = ff_clusters$cluster) %>% 
+  mutate(cluster = if_else(p_throws == "L", paste(cluster, "L", sep = ""), paste(cluster, "R", sep = ""))) %>% 
+  group_by(cluster) %>% 
+  summarize(across(where(is.numeric) & !launch_angle, \(x) mean(x, na.rm = TRUE)),
+            swstr = sum(description == "swinging_strike" | description == "swinging_strike_blocked")/n(),
+            whiff = sum(description == "swinging_strike" | description == "swinging_strike_blocked")/
+              sum(description %in% c("swinging_strike", "hit_into_play", "foul", "foul_tip",
+                                     "swinging_strike_blocked")),
+            gb_rate = sum(launch_angle < 0, na.rm = TRUE)/sum(!is.na(launch_angle))
+            ) %>% 
+  rename(wobacon = woba_value) %>% 
+  arrange(-release_speed)
+```
+
+```{r}
+cu_cluster_results <- scaled_pitches %>%
+  filter(pitch_type == "CU") %>% 
+  select(where(is.numeric)) %>% 
+  sapply(1:14, test_centers, df = .)
+
+cu_cluster_results %>% 
+  data.frame(clusters = 1:14,
+             total_within_ss = .) %>% 
+  ggplot(aes(x = clusters, y = log(total_within_ss))) +
+  geom_point() +
+  geom_line()
+
+cu_clusters <- scaled_pitches %>%
+  filter(pitch_type == "CU") %>% 
+  select(where(is.numeric)) %>% 
+  kmeans(centers = 3, nstart = 10, iter.max = 1000)
+
+
+cbind(all_pitches %>% 
+        filter(pitch_type == "CU") %>% 
+        select(c(pitcher_name, hitter_name, p_throws, pitch_type, release_speed, pfx_x, pfx_z, 
+                 #release_pos_x, release_pos_z, 
+                 #release_extension,
+                 release_spin_rate, spin_axis, woba_value, launch_angle, description)) %>% 
+        drop_na(where(is.numeric) & !launch_angle & !woba_value & !spin_axis),
+      cluster = cu_clusters$cluster) %>% 
+  mutate(cluster = if_else(p_throws == "L", paste(cluster, "L", sep = ""), paste(cluster, "R", sep = ""))) %>% 
+  group_by(cluster) %>% 
+  summarize(across(where(is.numeric) & !launch_angle, \(x) mean(x, na.rm = TRUE)),
+            swstr = sum(description == "swinging_strike" | description == "swinging_strike_blocked")/n(),
+            whiff = sum(description == "swinging_strike" | description == "swinging_strike_blocked")/
+              sum(description %in% c("swinging_strike", "hit_into_play", "foul", "foul_tip",
+                                     "swinging_strike_blocked")),
+            gb_rate = sum(launch_angle < 0, na.rm = TRUE)/sum(!is.na(launch_angle))
+            ) %>% 
+  rename(wobacon = woba_value) %>% 
+  arrange(-release_speed)
+```
+
+```{r}
+cu_gmm <- scaled_pitches %>%
+  filter(pitch_type == "CU") %>% 
+  select(where(is.numeric)) %>% 
+  Mclust(G = 1:5)
+
+plot(cu_gmm, what = "BIC")
+```
+
+
+### Perform clustering
+```{r, warning = FALSE}
+# Consider using probabilistic/soft clustering
+# Using k = ?
+set.seed(101010)
+k = 3
+pitch_clusters <- scaled_pitches %>% 
+    kmeans(centers = k, nstart = 10)
+all_pitches2 <- cbind(all_pitches %>% select(c(pitcher_name, hitter_name, p_throws, pitch_type, release_speed, 
+                                               release_pos_x, release_pos_z, pfx_x, pfx_z, 
+                                               release_extension, woba_value, description)) %>% 
+                        drop_na(where(is.numeric) & !woba_value), 
+                      cluster = pitch_clusters$cluster) %>% 
+  mutate(cluster = if_else(p_throws == "L", paste(cluster, "L", sep = ""), paste(cluster, "R", sep = "")))
+```
+
+
+### Get performance against each cluster
+```{r}
+all_pitches2 %>% 
+  group_by(cluster) %>% 
+  summarize(across(where(is.numeric), \(x) mean(x, na.rm = TRUE)),
+            swstr = sum(description == "swinging_strike" | description == "swinging_strike_blocked")/n(),
+            whiff = sum(description == "swinging_strike" | description == "swinging_strike_blocked")/
+              sum(description %in% c("swinging_strike", "hit_into_play", "foul", "foul_tip",
+                                     "swinging_strike_blocked"))) %>% 
+  rename(wobacon = woba_value) %>% 
+  arrange(-release_speed)
+
+
+all_pitches2 %>% 
+  group_by(cluster, pitch_type) %>% 
+  summarize(ct = n(),
+            .groups = "drop") %>% 
+  pivot_wider(names_from = pitch_type, values_from = ct)
+```
+
+```{r}
+repertoires <- all_pitches2 %>% 
+  group_by(pitcher_name, cluster) %>% 
+  summarize(ct = n(), .groups = "keep") %>%
+  group_by(pitcher_name) %>% 
+  mutate(perc = ct/sum(ct)) %>% 
+  select(-ct) %>% 
+  pivot_wider(names_from = cluster, values_from = perc, values_fill = 0) %>%
+  ungroup()  
+
+test_centers <- function(i){
+  # Make the clusters with i centers
+  test_cluster <- repertoires %>% 
+    select(-pitcher_name) %>% 
+    kmeans(centers = i, nstart = 5)
+  # Find how effective
+  return(test_cluster$tot.withinss)
+}
+
+test_cluster_list <- 2:40
+test_cluster_results <- sapply(test_cluster_list, test_centers)
+test_cluster_results %>% 
+  data.frame(clusters = test_cluster_list,
+             total_within_ss = .) %>% 
+  ggplot(aes(x = clusters, y = log(total_within_ss))) +
+  geom_point() +
+  geom_line()
+
+
+rep_clusters <- kmeans(repertoires %>% select(-pitcher_name), centers = 10, nstart = 5)
+cbind(repertoires %>% select(pitcher_name), 
+      cluster = rep_clusters$cluster) %>%
+  filter(cluster == 2)
+```
+
+
+```{r}
+# Make prior and then take performance
+# For now, use wobacon as performance metric and then switch later
+# Try with Austin Riley against cluster 8R
+all_pitches2 %>% 
+  group_by(hitter_name, cluster) %>% 
+  summarize(ct = n(), .groups = "drop") %>% 
+  arrange(-ct)
+# Get prior of 8R
+
+# Get 
+```
+
