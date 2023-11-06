@@ -36,16 +36,35 @@ hitter_data <- all_pitches %>%
                                     "foul_bunt", "swinging_strike_blocked", "missed_bunt"),
          whiff = description %in% c("swinging_strike_blocked", "swinging_strike", "foul_tip")) %>% 
   group_by(batter, hitter_name) %>% 
-  summarize(exit_velo_ct = sum(!is.na(launch_speed)),
+  summarize(balls_in_play = sum(!is.na(launch_speed) & description != "foul"),
             exit_velo_95 = quantile(launch_speed, .95, na.rm = TRUE),
             O_swing = sum(swing & !in_zone)/sum(!in_zone),
             Z_swing = sum(swing & in_zone)/sum(in_zone),
             Z_contact = sum(swing & !whiff & in_zone)/sum(swing & in_zone),
-            .groups = 'drop') %>% 
-  filter(exit_velo_ct > 15) %>% 
-  select(-exit_velo_ct)
+            LA = mean(launch_angle, na.rm = TRUE),
+            wOBA = sum(woba_value, na.rm = TRUE)/sum(woba_denom, na.rm = TRUE),
+            .groups = 'drop') 
 
 head(hitter_data)
+```
+
+```{r}
+ggplot(hitter_data, aes(x = balls_in_play, y = LA)) +
+  geom_point()
+```
+
+```{r}
+hitter_data <- hitter_data %>% 
+  filter(balls_in_play >= 75) %>% 
+  select(-balls_in_play)
+
+head(hitter_data)
+```
+
+```{r}
+# SVD on hitter_data
+hist(svd(scaled_hitters %>% as.matrix())$u[,1])
+svd(scaled_hitters %>% as.matrix())$d
 ```
 
 #### K Means
@@ -61,11 +80,12 @@ test_centers <- function(i, df){
 }
 
 scaled_hitters <- hitter_data %>% 
-  select(where(is.numeric) & !batter) %>% 
+  select(where(is.numeric) & !batter & !wOBA) %>% 
   mutate(across(where(is.numeric), 
                scale_z),
-         O_swing = O_swing * .7,
-         Z_swing = Z_swing * .7) %>% 
+         O_swing = O_swing * .5,
+         Z_swing = Z_swing * .5
+         ) %>% 
   drop_na()
 
 
@@ -84,7 +104,7 @@ test_cluster_results %>%
 ```{r}
 # Cluster the hitters
 hitter_kmeans <- scaled_hitters %>% 
-  kmeans(centers = 5, nstart = 10, iter.max = 1000)
+  kmeans(centers = 3, nstart = 10, iter.max = 1000)
 hitter_clusters <- cbind(hitter_data %>% drop_na(),
       cluster = hitter_kmeans$cluster)
 
@@ -94,7 +114,8 @@ hitter_clusters %>%
   summarize(exit_velo_95 = mean(exit_velo_95),
             O_swing = mean(O_swing),
             Z_swing = mean(Z_swing),
-            Z_contact = mean(Z_contact))
+            Z_contact = mean(Z_contact),
+            LA = mean(LA))
 ```
 
 #### Gaussian Mixed Models
@@ -117,5 +138,34 @@ cbind(hitter_data, cluster = as.factor(hitter_gmm$classification)) %>%
             Z_contact = mean(Z_contact))
 ```
 
+#### Hierarchical
+```{r}
+hitter_hclust <- hclust(dist(scaled_hitters), method = "ward.D2")
 
+plot(hitter_hclust)
+```
+
+```{r}
+cbind(hitter_data, cluster = as.factor(cutree(hitter_hclust, k = 4))) %>% 
+  group_by(cluster) %>% 
+  summarize(exit_velo_95 = mean(exit_velo_95),
+            O_swing = mean(O_swing),
+            Z_swing = mean(Z_swing),
+            Z_contact = mean(Z_contact),
+            LA = mean(LA),
+            wOBA = mean(wOBA))
+
+cbind(hitter_data, cluster = as.factor(cutree(hitter_hclust, k = 4))) %>% 
+  filter(cluster == 1) %>% 
+  arrange(-wOBA) 
+cbind(hitter_data, cluster = as.factor(cutree(hitter_hclust, k = 4))) %>% 
+  filter(cluster == 2) %>% 
+  arrange(-wOBA) 
+cbind(hitter_data, cluster = as.factor(cutree(hitter_hclust, k = 4))) %>% 
+  filter(cluster == 3) %>% 
+  arrange(-wOBA) 
+cbind(hitter_data, cluster = as.factor(cutree(hitter_hclust, k = 4))) %>% 
+  filter(cluster == 4) %>% 
+  arrange(-wOBA) 
+```
 
