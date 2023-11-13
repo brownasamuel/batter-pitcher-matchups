@@ -8,11 +8,13 @@ output: pdf_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ggplot2::theme_set(ggplot2::theme_bw()) 
-library(tidyverse)
+library(lme4)
 library(nlme)
 library(rstanarm)
+library(tidyverse)
 ```
 
+# Read in data
 ```{r}
 files <- list.files(pattern = "2022", full.names = TRUE)
 pitcher_ids <- read.csv("pitcher_ids.csv")
@@ -32,21 +34,9 @@ pitcher_data <- read.csv("PitcherClusterInfo.csv") %>%
 hier_hitters <- read.csv("clustered_hitters.csv")
 ```
 
+# Make model
 ```{r}
-head(hier_hitters)
-
-lm(wOBA ~ LA + cluster, data = hier_hitters)
-lmer(wOBA ~ 1 + LA + (1 | cluster), data = hier_hitters)
-lme(fixed = wOBA ~ 1 + LA, random = -1 | cluster, data = hier_hitters)
-```
-
-```{r}
-
-
-posterior_predict(bayes_mix, hier_hitters)
-
 # Predict wOBA with random effect for hitter and pitcher and fixed effects for clusters and interaction of clusters and pitcher handedness
-
 model_data <- all_pitches %>% 
   filter(woba_denom == 1) %>% 
   mutate(wOBA = woba_value/woba_denom,
@@ -63,9 +53,52 @@ model_data <- all_pitches %>%
         by = c("pitcher", "pitcher_name")) %>% 
   mutate(cluster_matchup = paste(hitter_cluster, pitcher_cluster, sep = "_"))
 
-bayes_mix <- stan_lmer(wOBA ~ 1 + matchup + hitter_cluster + pitcher_cluster + cluster_matchup 
+# bayes_mix <- stan_lmer(wOBA ~ 1 + matchup + hitter_cluster + pitcher_cluster + cluster_matchup
+#                        + (1 | pitcher_name) + (1 | hitter_name),
+#                        data = model_data)
+
+matchup_mix <- lmer(wOBA ~ 1 + matchup + hitter_cluster + pitcher_cluster + cluster_matchup 
                        + (1 | pitcher_name) + (1 | hitter_name), 
-                       data = model_data)
-bayes_mix$coefficients
+                    data = model_data)
+```
+
+# Look at results
+```{r}
+cbind(model_data, pred_wOBA = fitted(matchup_mix)) %>% 
+  arrange(-pred_wOBA) %>% 
+  select(-wOBA) %>% 
+  distinct()
+```
+
+# Make a function to predict matchups
+```{r}
+predict_wOBA <- function(hitter, pitcher, model){
+  # Find necessary pitcher data
+  pitcher_clust <- pitcher_data %>% select(-pitcher) %>% filter(pitcher_name == pitcher) %>% pull(pitcher_cluster)
+  pitcher_handedness <- pitcher_data %>% select(-pitcher) %>% filter(pitcher_name == pitcher) %>% pull(hand)
+  # # Find necessary hitter data
+  hitter_clust <- hier_hitters %>% 
+    mutate(hitter_name = sub("(^.*),\\s(.*$)","\\2 \\1", hitter_name)) %>% 
+    filter(hitter_name == hitter) %>% 
+    pull(cluster)
+  hitter_handedness <- model_data$matchup[model_data$hitter_name == hitter & 
+                                            str_sub(model_data$matchup, -1) == pitcher_handedness][1] %>% 
+    str_sub(start = 1, end = 1)
+  # Get combined data
+  hand_matchup <- paste(hitter_handedness, pitcher_handedness, sep = "_")
+  cluster_matchup <- paste(hitter_clust, pitcher_clust, sep = "_")
+  
+  
+  # Predict
+  return( predict(model, newdata = data.frame(matchup = hand_matchup,
+                                              hitter_cluster = hitter_clust,
+                                              pitcher_cluster = pitcher_clust,
+                                              pitcher_name = pitcher,
+                                              hitter_name = hitter,
+                                              cluster_matchup = cluster_matchup))[[1]] )
+}
+
+predict_wOBA(hitter = "Yordan Alvarez", pitcher = "Robbie Ray", matchup_mix)
+predict_wOBA(hitter = "Yordan Alvarez", pitcher = "Paul Sewald", matchup_mix)
 ```
 
