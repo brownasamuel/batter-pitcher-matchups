@@ -9,9 +9,9 @@ output: pdf_document
 knitr::opts_chunk$set(echo = TRUE)
 ggplot2::theme_set(ggplot2::theme_bw()) 
 library(tidyverse)
-library(mclust)
 ```
 
+# Read in data
 ```{r}
 files <- list.files(pattern = "2022", full.names = TRUE)
 pitcher_ids <- read.csv("pitcher_ids.csv")
@@ -27,6 +27,7 @@ rm(pitcher_ids)
 rm(batter_ids)
 ```
 
+# Make hitter clustering data
 ```{r}
 # Cluster on power(95th percentile exit velo) plus O-Swing%, Z-Swing, Z-contact
 hitter_data <- all_pitches %>% 
@@ -48,37 +49,19 @@ hitter_data <- all_pitches %>%
 head(hitter_data)
 ```
 
+### Find stabilization point of exit velo and filter for that point
 ```{r}
 ggplot(hitter_data, aes(x = balls_in_play, y = LA)) +
   geom_point()
 ```
 
 ```{r}
+# Filter for stabilization point
 hitter_data <- hitter_data %>% 
   filter(balls_in_play >= 75) %>% 
   select(-balls_in_play)
-
-head(hitter_data)
-```
-
-```{r}
-# SVD on hitter_data
-hist(svd(scaled_hitters %>% as.matrix())$u[,1])
-svd(scaled_hitters %>% as.matrix())$d
-```
-
-#### K Means
-```{r}
+# Scale hitter data
 scale_z <- function(x) (x - mean(x, na.rm = T)) / sd(x, na.rm = T)
-
-test_centers <- function(i, df){
-  # Make the clusters with i centers
-  test_cluster <- df %>% 
-    kmeans(centers = i, nstart = 5, iter.max = 300)
-  # Find how effective
-  return(test_cluster$tot.withinss)
-}
-
 scaled_hitters <- hitter_data %>% 
   select(where(is.numeric) & !batter & !wOBA) %>% 
   mutate(across(where(is.numeric), 
@@ -88,6 +71,25 @@ scaled_hitters <- hitter_data %>%
          ) %>% 
   drop_na()
 
+head(hitter_data)
+```
+
+### SVD?
+```{r}
+# SVD on hitter_data
+hist(svd(scaled_hitters %>% as.matrix())$u[,1])
+svd(scaled_hitters %>% as.matrix())$d
+```
+
+# K Means
+```{r}
+test_centers <- function(i, df){
+  # Make the clusters with i centers
+  test_cluster <- df %>% 
+    kmeans(centers = i, nstart = 5, iter.max = 300)
+  # Find how effective
+  return(test_cluster$tot.withinss)
+}
 
 # Find an elbow
 test_cluster_list <- 1:9
@@ -118,35 +120,19 @@ hitter_clusters %>%
             LA = mean(LA))
 ```
 
-#### Gaussian Mixed Models
-```{r}
-hitter_gmm <- Mclust(scaled_hitters, G = test_cluster_list, verbose = FALSE)
-plot(hitter_gmm, what = "BIC")
-```
-
-```{r}
-# Use optimal clustering algorithm
-hitter_gmm <- Mclust(scaled_hitters, G = 2, modelNames = "VEE", verbose = FALSE)
-# Visualize and look at group averages
-plot(hitter_gmm, what = "uncertainty")
-
-cbind(hitter_data, cluster = as.factor(hitter_gmm$classification)) %>% 
-  group_by(cluster) %>% 
-  summarize(exit_velo_95 = mean(exit_velo_95),
-            O_swing = mean(O_swing),
-            Z_swing = mean(Z_swing),
-            Z_contact = mean(Z_contact))
-```
-
-#### Hierarchical
+# Hierarchical clustering
+### Make dendrogram
 ```{r}
 hitter_hclust <- hclust(dist(scaled_hitters), method = "ward.D2")
 
 plot(hitter_hclust)
 ```
 
+### Look at different clusters
 ```{r}
-cbind(hitter_data, cluster = as.factor(cutree(hitter_hclust, k = 4))) %>% 
+hier_hitters <- cbind(hitter_data, cluster = as.factor(cutree(hitter_hclust, k = 4)))
+
+hier_hitters %>% 
   group_by(cluster) %>% 
   summarize(exit_velo_95 = mean(exit_velo_95),
             O_swing = mean(O_swing),
@@ -155,17 +141,22 @@ cbind(hitter_data, cluster = as.factor(cutree(hitter_hclust, k = 4))) %>%
             LA = mean(LA),
             wOBA = mean(wOBA))
 
-cbind(hitter_data, cluster = as.factor(cutree(hitter_hclust, k = 4))) %>% 
+hier_hitters %>% 
   filter(cluster == 1) %>% 
   arrange(-wOBA) 
-cbind(hitter_data, cluster = as.factor(cutree(hitter_hclust, k = 4))) %>% 
+hier_hitters %>% 
   filter(cluster == 2) %>% 
   arrange(-wOBA) 
-cbind(hitter_data, cluster = as.factor(cutree(hitter_hclust, k = 4))) %>% 
+hier_hitters %>% 
   filter(cluster == 3) %>% 
   arrange(-wOBA) 
-cbind(hitter_data, cluster = as.factor(cutree(hitter_hclust, k = 4))) %>% 
+hier_hitters %>% 
   filter(cluster == 4) %>% 
   arrange(-wOBA) 
+```
+
+# Write that down
+```{r}
+write.csv(hier_hitters, "clustered_hitters.csv", row.names = FALSE)
 ```
 

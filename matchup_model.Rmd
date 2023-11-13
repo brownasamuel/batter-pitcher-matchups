@@ -9,9 +9,63 @@ output: pdf_document
 knitr::opts_chunk$set(echo = TRUE)
 ggplot2::theme_set(ggplot2::theme_bw()) 
 library(tidyverse)
+library(nlme)
+library(rstanarm)
+```
+
+```{r}
+files <- list.files(pattern = "2022", full.names = TRUE)
+pitcher_ids <- read.csv("pitcher_ids.csv")
+batter_ids <- read.csv("hitter_ids.csv")
+all_pitches <- Reduce(rbind, lapply(files, read.csv)) %>%
+  filter(balls < 4 & strikes < 3) %>%
+  unite("count", balls, strikes, remove = FALSE) %>%
+  unite("matchup", stand, p_throws, remove = FALSE) %>% 
+  inner_join(pitcher_ids, by = "pitcher") %>% 
+  inner_join(batter_ids, by = "batter")
+
+rm(pitcher_ids)
+rm(batter_ids)
+
+pitcher_data <- read.csv("PitcherClusterInfo.csv") %>% 
+  rename(pitcher_name = name, pitcher_cluster = cluster)
+hier_hitters <- read.csv("clustered_hitters.csv")
+```
+
+```{r}
+head(hier_hitters)
+
+lm(wOBA ~ LA + cluster, data = hier_hitters)
+lmer(wOBA ~ 1 + LA + (1 | cluster), data = hier_hitters)
+lme(fixed = wOBA ~ 1 + LA, random = -1 | cluster, data = hier_hitters)
 ```
 
 ```{r}
 
+
+posterior_predict(bayes_mix, hier_hitters)
+
+# Predict wOBA with random effect for hitter and pitcher and fixed effects for clusters and interaction of clusters and pitcher handedness
+
+model_data <- all_pitches %>% 
+  filter(woba_denom == 1) %>% 
+  mutate(wOBA = woba_value/woba_denom,
+         pitcher_name = sub("(^.*),\\s(.*$)","\\2 \\1", pitcher_name),
+         hitter_name = sub("(^.*),\\s(.*$)","\\2 \\1", hitter_name)) %>% 
+  select(batter, hitter_name, pitcher, pitcher_name, matchup, wOBA) %>% 
+  merge(hier_hitters %>% 
+          select(batter, hitter_name, cluster) %>% 
+          rename(hitter_cluster = cluster) %>% 
+          mutate(hitter_name = sub("(^.*),\\s(.*$)","\\2 \\1", hitter_name)), 
+        by = c("batter", "hitter_name")) %>% 
+  merge(pitcher_data %>% 
+          select(-hand), 
+        by = c("pitcher", "pitcher_name")) %>% 
+  mutate(cluster_matchup = paste(hitter_cluster, pitcher_cluster, sep = "_"))
+
+bayes_mix <- stan_lmer(wOBA ~ 1 + matchup + hitter_cluster + pitcher_cluster + cluster_matchup 
+                       + (1 | pitcher_name) + (1 | hitter_name), 
+                       data = model_data)
+bayes_mix$coefficients
 ```
 
