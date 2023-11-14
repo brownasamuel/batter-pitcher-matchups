@@ -9,9 +9,9 @@ output: pdf_document
 knitr::opts_chunk$set(echo = TRUE)
 ggplot2::theme_set(ggplot2::theme_bw()) 
 library(tidyverse)
-library(mclust)
 ```
 
+# Read in data
 ```{r}
 files <- list.files(pattern = "2022", full.names = TRUE)
 pitcher_ids <- read.csv("pitcher_ids.csv")
@@ -27,6 +27,7 @@ rm(pitcher_ids)
 rm(batter_ids)
 ```
 
+# Make hitter clustering data
 ```{r}
 # Cluster on power(95th percentile exit velo) plus O-Swing%, Z-Swing, Z-contact
 hitter_data <- all_pitches %>% 
@@ -36,22 +37,52 @@ hitter_data <- all_pitches %>%
                                     "foul_bunt", "swinging_strike_blocked", "missed_bunt"),
          whiff = description %in% c("swinging_strike_blocked", "swinging_strike", "foul_tip")) %>% 
   group_by(batter, hitter_name) %>% 
-  summarize(exit_velo_ct = sum(!is.na(launch_speed)),
+  summarize(balls_in_play = sum(!is.na(launch_speed) & description != "foul"),
             exit_velo_95 = quantile(launch_speed, .95, na.rm = TRUE),
             O_swing = sum(swing & !in_zone)/sum(!in_zone),
             Z_swing = sum(swing & in_zone)/sum(in_zone),
             Z_contact = sum(swing & !whiff & in_zone)/sum(swing & in_zone),
-            .groups = 'drop') %>% 
-  filter(exit_velo_ct > 15) %>% 
-  select(-exit_velo_ct)
+            LA = mean(launch_angle, na.rm = TRUE),
+            wOBA = sum(woba_value, na.rm = TRUE)/sum(woba_denom, na.rm = TRUE),
+            .groups = 'drop') 
 
 head(hitter_data)
 ```
 
-#### K Means
+### Find stabilization point of exit velo and filter for that point
 ```{r}
-scale_z <- function(x) (x - mean(x, na.rm = T)) / sd(x, na.rm = T)
+ggplot(hitter_data, aes(x = balls_in_play, y = LA)) +
+  geom_point()
+```
 
+```{r}
+# Filter for stabilization point
+hitter_data <- hitter_data %>% 
+  filter(balls_in_play >= 75) %>% 
+  select(-balls_in_play)
+# Scale hitter data
+scale_z <- function(x) (x - mean(x, na.rm = T)) / sd(x, na.rm = T)
+scaled_hitters <- hitter_data %>% 
+  select(where(is.numeric) & !batter & !wOBA) %>% 
+  mutate(across(where(is.numeric), 
+               scale_z),
+         O_swing = O_swing * .5,
+         Z_swing = Z_swing * .5
+         ) %>% 
+  drop_na()
+
+head(hitter_data)
+```
+
+### SVD?
+```{r}
+# SVD on hitter_data
+hist(svd(scaled_hitters %>% as.matrix())$u[,1])
+svd(scaled_hitters %>% as.matrix())$d
+```
+
+# K Means
+```{r}
 test_centers <- function(i, df){
   # Make the clusters with i centers
   test_cluster <- df %>% 
@@ -59,15 +90,6 @@ test_centers <- function(i, df){
   # Find how effective
   return(test_cluster$tot.withinss)
 }
-
-scaled_hitters <- hitter_data %>% 
-  select(where(is.numeric) & !batter) %>% 
-  mutate(across(where(is.numeric), 
-               scale_z),
-         O_swing = O_swing * .7,
-         Z_swing = Z_swing * .7) %>% 
-  drop_na()
-
 
 # Find an elbow
 test_cluster_list <- 1:9
@@ -84,7 +106,7 @@ test_cluster_results %>%
 ```{r}
 # Cluster the hitters
 hitter_kmeans <- scaled_hitters %>% 
-  kmeans(centers = 5, nstart = 10, iter.max = 1000)
+  kmeans(centers = 3, nstart = 10, iter.max = 1000)
 hitter_clusters <- cbind(hitter_data %>% drop_na(),
       cluster = hitter_kmeans$cluster)
 
@@ -94,33 +116,56 @@ hitter_clusters %>%
   summarize(exit_velo_95 = mean(exit_velo_95),
             O_swing = mean(O_swing),
             Z_swing = mean(Z_swing),
-            Z_contact = mean(Z_contact))
+            Z_contact = mean(Z_contact),
+            LA = mean(LA))
 ```
 
-#### Gaussian Mixed Models
+# Hierarchical clustering
+### Make dendrogram
 ```{r}
-hitter_gmm <- Mclust(scaled_hitters, G = test_cluster_list, verbose = FALSE)
-plot(hitter_gmm, what = "BIC")
+hitter_hclust <- hclust(dist(scaled_hitters), method = "ward.D2")
+
+plot(hitter_hclust)
 ```
 
+### Look at different clusters
 ```{r}
-# Use optimal clustering algorithm
-hitter_gmm <- Mclust(scaled_hitters, G = 2, modelNames = "VEE", verbose = FALSE)
-# Visualize and look at group averages
-plot(hitter_gmm, what = "uncertainty")
+hier_hitters <- cbind(hitter_data, cluster = as.factor(cutree(hitter_hclust, k = 4)))
 
-cbind(hitter_data, cluster = as.factor(hitter_gmm$classification)) %>% 
+hier_hitters %>% 
   group_by(cluster) %>% 
   summarize(exit_velo_95 = mean(exit_velo_95),
             O_swing = mean(O_swing),
             Z_swing = mean(Z_swing),
-            Z_contact = mean(Z_contact))
+            Z_contact = mean(Z_contact),
+            LA = mean(LA),
+            wOBA = mean(wOBA))
+
+hier_hitters %>% 
+  filter(cluster == 1) %>% 
+  arrange(-wOBA) 
+hier_hitters %>% 
+  filter(cluster == 2) %>% 
+  arrange(-wOBA) 
+hier_hitters %>% 
+  filter(cluster == 3) %>% 
+  arrange(-wOBA) 
+hier_hitters %>% 
+  filter(cluster == 4) %>% 
+  arrange(-wOBA) 
 ```
 
+<<<<<<< HEAD
 ## ben additional stuff
 
 ```{r}
 # Exploring EV/LA Clustering
 ```
 
+=======
+# Write that down
+```{r}
+write.csv(hier_hitters, "clustered_hitters.csv", row.names = FALSE)
+```
+>>>>>>> a5ecfa60b45439f8e340fe9665f9c53576d3ce17
 
