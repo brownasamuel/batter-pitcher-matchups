@@ -117,5 +117,10 @@ cbind(hitter_data, cluster = as.factor(hitter_gmm$classification)) %>%
             Z_contact = mean(Z_contact))
 ```
 
+## ben additional stuff
+
+```{r}
+# Exploring EV/LA Clustering
+```
 
 
